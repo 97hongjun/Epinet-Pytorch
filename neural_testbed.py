@@ -18,10 +18,10 @@ def get_dataloaders(X: Tensor, Y: Tensor, probs: Tensor, batch_size: int, shuffl
     return FastTensorDataLoader(X, Y, probs, batch_size=batch_size, shuffle=shuffle,
                                 keep_last=keep_last, generator=generator, device=device)
 
-def train(model: nn.Module, train_loader: FastTensorDataLoader, test_loader: FastTensorDataLoader, num_epochs: int, optimizer: torch.optim.Optimizer, device: str) -> nn.Module:
+def train(model: nn.Module, train_loader: FastTensorDataLoader, test_loader: FastTensorDataLoader, num_epochs: int, optimizer: torch.optim.Optimizer, device: str, filename: str) -> nn.Module:
     model.train()
     # Initialize loss logging
-    log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'training_loss.log')
+    log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
     
     for epoch in range(num_epochs):
         epoch_loss = 0.0
@@ -48,8 +48,12 @@ def train(model: nn.Module, train_loader: FastTensorDataLoader, test_loader: Fas
         test_loss = evaluate(model, test_loader, device)
         
         # Log both losses to file
-        with open(log_file, 'a') as f:
-            f.write(f"{epoch},{avg_train_loss},{test_loss}\n")
+        if epoch == 0:
+            with open(log_file, 'w') as f:
+                f.write("epoch,train_loss,test_loss\n")
+        else:
+            with open(log_file, 'a') as f:
+                f.write(f"{epoch},{avg_train_loss},{test_loss}\n")
             
         print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.6f}, Test Loss: {test_loss:.6f}")
     return model
@@ -73,20 +77,23 @@ def evaluate(model: nn.Module, test_loader: FastTensorDataLoader, device: str) -
 
 if __name__ == "__main__":
     input_dim = 10
-    hidden_dims = [50, 50]
+    hidden_dims_model = [50, 50]
     output_dims = 2
+    hidden_dims_agent = [100, 100]
     if torch.cuda.is_available():
         device = "cuda"
     else:
         device = "cpu"
-    model = MLP(input_dim, hidden_dims, output_dims).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    model = MLP(input_dim, hidden_dims_model, output_dims).to(device)
+    agent = MLP(input_dim, hidden_dims_agent, output_dims).to(device)
+    optimizer = torch.optim.Adam(agent.parameters(), lr=0.001)
     data_generator = torch.Generator(device="cpu").manual_seed(42)
     agent_generator = torch.Generator(device="cpu").manual_seed(42)
+    filename = f"training_loss_in{input_dim}_hid{hidden_dims_model[0]}_out{output_dims}_hid{hidden_dims_agent[0]}.log"
     X_train, Y_train, probs_train = generateSample(input_dim, model, 2**16, data_generator, device)  
     train_loader = get_dataloaders(X_train, Y_train, probs_train, batch_size=128, shuffle=True, keep_last=True, generator=agent_generator, device=device)
     X_test, Y_test, probs_test = generateSample(input_dim, model, 2**16, data_generator, device)
     test_loader = get_dataloaders(X_test, Y_test, probs_test, batch_size=128, shuffle=False, keep_last=True, generator=agent_generator, device=device)
-    model = train(model, train_loader, test_loader, num_epochs=100, optimizer=optimizer, device=device)
-    kl = evaluate(model, test_loader, device=device)
+    agent = train(agent, train_loader, test_loader, num_epochs=100, optimizer=optimizer, device=device, filename=filename)
+    kl = evaluate(agent, test_loader, device=device)
     print(f"KL: {kl}")
