@@ -4,9 +4,10 @@ from torch import Tensor
 from typing import Any
 
 
-class MLP(nn.module):
+class MLP(nn.Module):
 
     def __init__(self, input_dim: int, hidden_dims: list[int], output_dim: int, bias: bool=True) -> None:
+        super().__init__()
         dims = [input_dim] + hidden_dims + [output_dim]
         layers = []
         for i in range(len(dims)-1):
@@ -14,10 +15,10 @@ class MLP(nn.module):
             layers.append(nn.Linear(in_dim, out_dim, bias=bias))
             if i < len(dims)-2:
                 layers.append(nn.ReLU())
-        self.model = nn.Sequential(*layers)
+        self.network = nn.Sequential(*layers)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.model(x)
+        return self.network(x)
 
 class Priornet(nn.Module):
     """
@@ -25,6 +26,7 @@ class Priornet(nn.Module):
     """
     def __init__(self, input_dim: int, hidden_dims: list[int], output_dim: int,
                  z_dim: int, bias: bool=True, generator: torch.Generator=None) -> None:
+        super().__init__()
         self.models = []
         self.generator = generator
         for _ in range(z_dim):
@@ -73,6 +75,7 @@ class Epinet(nn.Module):
     def __init__(self, index_dim: int, input_dim: int, output_dim: int, num_indices: int,
                  epi_hiddens: list[int], prior_hiddens: list[int], prior_scale: float,
                  bias: bool =True, generator: torch.Generator=None) -> None:
+        super().__init__()
         
         self.index_dim = index_dim
         self.num_indices = num_indices
