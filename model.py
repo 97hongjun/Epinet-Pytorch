@@ -6,7 +6,7 @@ from typing import Any
 
 class MLP(nn.Module):
 
-    def __init__(self, input_dim: int, hidden_dims: list[int], output_dim: int, bias: bool=True) -> None:
+    def __init__(self, input_dim: int, hidden_dims: list[int], output_dim: int, bias: bool=True, generator: torch.Generator=None) -> None:
         super().__init__()
         dims = [input_dim] + hidden_dims + [output_dim]
         layers = []
@@ -16,6 +16,12 @@ class MLP(nn.Module):
             if i < len(dims)-2:
                 layers.append(nn.ReLU())
         self.network = nn.Sequential(*layers)
+        self.generator = generator
+
+    def init_xavier_uniform(self, m: nn.Module) -> None:
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight, generator=self.generator)
+            m.bias.data.fill_(0.01)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.network(x)
