@@ -15,6 +15,15 @@ def generateSample(input_dim, model, dataset_size, generator=None, device="cpu")
         Y = torch.bernoulli(probs[:,1], generator=generator).int()
     return X.to("cpu"), Y, probs
 
+def generateLogistic(input_dim, model, dataset_size, generator=None, device="cpu"):
+    with torch.no_grad():
+        X = torch.normal(torch.zeros((dataset_size, input_dim)), torch.ones((dataset_size, input_dim)), generator=generator).to(device)
+        # add softmax
+        probs = nn.Sigmoid()(model(X)).to("cpu")
+        probs = torch.cat((1-probs, probs), dim=-1)
+        Y = torch.bernoulli(probs[:,1], generator=generator).int()
+    return X.to("cpu"), Y, probs
+
 def get_dataloaders(X: Tensor, Y: Tensor, probs: Tensor, batch_size: int, shuffle: bool, keep_last: bool,
                     generator: torch.Generator, device: str):
     return FastTensorDataLoader(X, Y, probs, batch_size=batch_size, shuffle=shuffle,
@@ -44,7 +53,7 @@ def train(model: nn.Module, train_loader: FastTensorDataLoader, test_loader: Fas
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        
+
         # Calculate and log both training and test loss
         avg_train_loss = epoch_loss / num_batches
         test_loss = evaluate(model, test_loader, device)
@@ -60,6 +69,58 @@ def train(model: nn.Module, train_loader: FastTensorDataLoader, test_loader: Fas
         print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.6f}, Test Loss: {test_loss:.6f}")
     return model
             
+def train_single_pass_logistic(model: nn.Module, train_loader: FastTensorDataLoader, optimizer: torch.optim.Optimizer,
+                               device: str, filename: str, log_freq: int, swa_model: Optional[AveragedModel]=None, counter: int=0) -> tuple[nn.Module, int]:
+    model.train()
+    log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+    
+    total_samples = counter
+    total_loss = 0.0
+    total_swa_loss = 0.0
+    for i, (x, y, probs) in enumerate(train_loader):
+        x, y, probs = x.to(device), y.to(device), probs.to(device)
+        pred = nn.Sigmoid()(model(x))
+        pred = torch.cat((1-pred, pred), dim=-1)
+
+        pred_prob = pred[torch.arange(len(pred)), y]
+        true_prob = probs[torch.arange(len(probs)), y]
+        loss = torch.sum(torch.log(true_prob) - torch.log(pred_prob))
+        total_samples += len(x)
+        total_loss += loss.item()
+
+        if swa_model is not None:
+            swa_pred = nn.Sigmoid()(swa_model(x))
+            swa_pred = torch.cat((1-swa_pred, swa_pred), dim=-1)
+            swa_pred_prob = swa_pred[torch.arange(len(swa_pred)), y]
+            swa_true_prob = probs[torch.arange(len(probs)), y]
+            swa_kl = torch.log(swa_true_prob) - torch.log(swa_pred_prob)
+            swa_loss = torch.sum(swa_kl)
+            total_swa_loss += swa_loss.item()
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if swa_model is not None:
+            swa_model.update_parameters(model)
+            # swa_scheduler.step()
+        if i % log_freq == 0:
+            if total_samples == 0:
+                with open(log_file, 'w') as f:
+                    if swa_model is not None:   
+                        f.write("batch,loss,swa_loss\n")
+                    else:
+                        f.write("batch,loss\n")
+            else:
+                with open(log_file, 'a') as f:
+                    if swa_model is not None:
+                        f.write(f"{total_samples},{total_loss/total_samples},{total_swa_loss/total_samples}\n")
+                    else:
+                        f.write(f"{total_samples},{total_loss/total_samples}\n")
+    return model, total_samples
+
+
+
 def train_single_pass(model: nn.Module, train_loader: FastTensorDataLoader, optimizer: torch.optim.Optimizer, 
 device: str, filename: str, log_freq: int, swa_model: Optional[AveragedModel]=None, swa_scheduler: Optional[SWALR]=None) -> nn.Module:
     model.train()
@@ -146,19 +207,19 @@ if __name__ == "__main__":
     agent.apply(agent.init_xavier_uniform)
     optimizer = torch.optim.Adam(agent.parameters(), lr=0.001)
     if swa:
-        swa_model = AveragedModel(agent)
+        swa_model = AveragedModel(agent, avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.9))
         swa_scheduler = SWALR(optimizer, swa_lr=0.05)
-        filename = f"logs/training_loss_in{input_dim}_hid{hidden_dims_model[0]}_out{output_dims}_hid{hidden_dims_agent[0]}_swa.log"
+        filename = f"logs/training_loss_in{input_dim}_hid{hidden_dims_model[0]}_out{output_dims}_hid{hidden_dims_agent[0]}_swa2.log"
     else:
         filename = f"logs/training_loss_in{input_dim}_hid{hidden_dims_model[0]}_out{output_dims}_hid{hidden_dims_agent[0]}.log"
-    X_train, Y_train, probs_train = generateSample(input_dim, model, 2**26, data_generator, device)  
+    X_train, Y_train, probs_train = generateSample(input_dim, model, 2**24, data_generator, device)  
     train_loader = get_dataloaders(X_train, Y_train, probs_train, batch_size=128, shuffle=True, keep_last=True, generator=agent_generator, device=device)
     # X_test, Y_test, probs_test = generateSample(input_dim, model, 2**16, data_generator, device)
     # test_loader = get_dataloaders(X_test, Y_test, probs_test, batch_size=128, shuffle=False, keep_last=True, generator=agent_generator, device=device)
     # agent = train(agent, train_loader, test_loader, num_epochs=100, optimizer=optimizer, device=device, filename=filename)
     if swa:
-        agent = train_single_pass(agent, train_loader, optimizer, device, filename, log_freq=2**11, swa_model=swa_model, swa_scheduler=swa_scheduler)
+        agent = train_single_pass(agent, train_loader, optimizer, device, filename, log_freq=2**10, swa_model=swa_model, swa_scheduler=swa_scheduler)
     else:
-        agent = train_single_pass(agent, train_loader, optimizer, device, filename, log_freq=2**11)
+        agent = train_single_pass(agent, train_loader, optimizer, device, filename, log_freq=2**10)
     # kl = evaluate(agent, test_loader, device=device)
     # print(f"KL: {kl}")
