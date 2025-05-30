@@ -26,6 +26,23 @@ class MLP(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self.network(x)
 
+class LinearModel(nn.Module):
+
+    def __init__(self, input_dim: int, bias: bool=False, generator: torch.Generator=None) -> None:
+        super().__init__()
+        self.linear = nn.Linear(input_dim, 1, bias=bias)
+        self.bias = bias
+        self.generator = generator
+
+    def init_xavier_uniform(self, m: nn.Module) -> None:
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight, generator=self.generator)
+            if self.bias:
+                m.bias.data.fill_(0.01)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.linear(x)
+
 class Priornet(nn.Module):
     """
         Prior network for epinet. This network contains an ensemble of randomly initialized models which are held fixed during training.
