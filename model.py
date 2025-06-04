@@ -104,6 +104,7 @@ class Epinet(nn.Module):
         self.num_indices = num_indices
         self.epinet_input_dim = input_dim + self.index_dim
 
+        self.generator = generator
         # Trainable Epinet
         self.epinet: nn.Module = MLP(self.epinet_input_dim, epi_hiddens, self.index_dim * output_dim, bias=bias)
         self.epinet.apply(self.init_xavier_uniform)
